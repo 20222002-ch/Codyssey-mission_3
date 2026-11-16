@@ -3,6 +3,8 @@ import json
 import math
 from pathlib import Path
 
+EPSILON = 1e-9
+
 # 정해진 크기의 숫자 배열을 입력받는 함수
 def read_matrix(name, size):
     matrix = []
@@ -67,6 +69,7 @@ def validate_matrix(matrix, size, name):
 
 # 패턴과 필터의 MAC 점수를 계산하는 함수
 def mac(pattern, filter_data):
+    # 입력과 필터의 같은 위치를 곱하고, 곱한 값을 누적해 점수로 반환한다.
     score = 0.0
     size = len(pattern)
 
@@ -81,9 +84,11 @@ def measure_mac(pattern, filter_data, repeat=10):
     total_seconds = 0.0
 
     for _ in range(repeat):
+        # 측정 시작: 배열 생성과 입출력은 포함하지 않는다.
         start = time.perf_counter()
         mac(pattern, filter_data)
         end = time.perf_counter()
+        # 측정 종료: MAC 함수 호출 구간만 초 단위로 기록한다.
 
         total_seconds += end - start
 
@@ -103,9 +108,7 @@ def run_manual():
     score_a = mac(pattern, filter_a)
     score_b = mac(pattern, filter_b)
 
-    epsilon = 1e-9
-
-    if abs(score_a - score_b) < epsilon:
+    if abs(score_a - score_b) < EPSILON:
         result = "판정 불가"
     elif score_a > score_b:
         result = "A"
@@ -116,11 +119,12 @@ def run_manual():
     print("B 점수:", score_b)
     print("판정:", result)
 
-    average_ms = measure_mac(pattern, filter_a)
-
     print("\n성능 분석: MAC 함수 1회 기준, 10회 평균")
-    print("크기 / 평균 시간(ms) / MAC 횟수(N²)")
-    print(f"3×3 / {average_ms:.6f} / {len(pattern) ** 2}")
+    print("필터 / 크기 / 평균 시간(ms) / MAC 횟수(N²)")
+    # 필터 A와 B를 각각 측정하며 출력 시간은 측정에 포함하지 않는다.
+    for name, filter_data in (("A", filter_a), ("B", filter_b)):
+        average_ms = measure_mac(pattern, filter_data)
+        print(f"{name} / 3×3 / {average_ms:.6f} / {len(pattern) ** 2}")
 
 # 라벨을 Cross 또는 X로 통일
 def normalize_label(label):
@@ -134,7 +138,9 @@ def normalize_label(label):
     elif label == "x":
         return "X"
     else:
-        raise ValueError(f"알 수 없는 라벨: {label}")
+        raise ValueError(
+            f"알 수 없는 라벨: {label!r}. 허용 예: +, cross, Cross, x, X"
+        )
 
 # 지정한 크기의 십자가 배열 생성
 def make_cross(size):
@@ -233,7 +239,9 @@ def run_json():
                 or not parts[1].isdigit()
                 or not parts[2].isdigit()
             ):
-                raise ValueError("패턴 이름은 size_N_번호 형식이어야 합니다.")
+                raise ValueError(
+                    "패턴 이름은 size_N_번호 형식이어야 합니다. 예: size_5_1"
+                )
 
             size = int(parts[1])
 
@@ -242,6 +250,12 @@ def run_json():
 
             # 해당 크기의 필터 가져오기
             filter_key = f"size_{size}"
+            if filter_key not in data["filters"]:
+                available = ", ".join(data["filters"]) or "없음"
+                raise ValueError(
+                    f"필터 {filter_key}가 없습니다. 사용 가능한 키: {available}. "
+                    "패턴 이름의 N과 필터 키의 크기를 확인하세요."
+                )
             raw_filters = data["filters"][filter_key]
 
             if not isinstance(raw_filters, dict):
@@ -254,6 +268,8 @@ def run_json():
 
             for label, matrix in raw_filters.items():
                 standard_label = normalize_label(label)
+                if standard_label in filters:
+                    raise ValueError(f"{standard_label} 필터 라벨이 중복되었습니다.")
                 filters[standard_label] = matrix
 
             # 입력 패턴과 기대 정답 가져오기
@@ -270,7 +286,7 @@ def run_json():
             score_x = mac(pattern, filters["X"])
 
             # 허용오차를 적용해서 판정
-            if abs(score_cross - score_x) < 1e-9:
+            if abs(score_cross - score_x) < EPSILON:
                 result = "UNDECIDED"
             elif score_cross > score_x:
                 result = "Cross"
@@ -286,12 +302,12 @@ def run_json():
 
                 if result == "UNDECIDED":
                     reason = (
-                        "두 점수 차이가 1e-9 미만이므로 동점 처리"
+                        "[TIE] 두 점수 차이가 1e-9 미만이므로 동점 처리"
                         f" (expected: {expected})"
                     )
                 else:
                     reason = (
-                        f"판정 {result}와 기대 정답 {expected}가 다름"
+                        f"[MISMATCH] 판정 {result}와 기대 정답 {expected}가 다름"
                     )
 
                 failures.append((pattern_key, reason))
@@ -301,7 +317,7 @@ def run_json():
             print(f"판정: {result} | expected: {expected} | {status}")
 
         except (KeyError, ValueError) as error:
-            reason = f"데이터 키 또는 값 오류: {error}"
+            reason = f"[DATA] 데이터 키 또는 값 오류: {error}"
             failures.append((pattern_key, reason))
             print(f"FAIL: {reason}")
 
